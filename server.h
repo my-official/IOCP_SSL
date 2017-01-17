@@ -8,45 +8,32 @@ unsigned __stdcall ServerMain(void*);
 
 class Server : public IOCPBase
 {
-public:
-	typedef void  (Server::*RecvFunc)(SOCKET*);
-	void Recv(SOCKET* socket);
-private:
-	SOCKET m_ListenSocket = INVALID_SOCKET;	
+public:	
+	volatile bool m_Quit;
 
-	class Transport
-	{
-	public:		
-		int m_Id;
-
-		Server* m_Server;
-		SOCKET m_ClientSocket;
-		DWORD m_TotalRecived;
-
-		vector<BYTE> m_RecvBuffer;
-		
-		OVERLAPPED m_SendOverlapped;
-		bool Send(DWORD numOfInts);
-		
-		OVERLAPPED m_ReciveOverlapped;
-		bool Recive();		
-
-		bool OnRecived(DWORD dwBytesTransfered);		
-
-		Transport(Server* server, SOCKET clientSocket);
-		~Transport();
-	};
-
-	map<SOCKET, Transport* > m_Socket2Clients;	
-
-	friend unsigned __stdcall ServerMain(void*);
-	void ThreadMain();	
+	SOCKET m_ListenSocket;	
 	
-	virtual void RecvThread() override;
+	void ThreadMain();
 
-	void Acceptor();	
-	void AssociateWithIOCP(Server::Transport * client);
+	void Acceptor();
+
+	LPFN_ACCEPTEX m_lpfnAcceptEx;
+	Transport * m_AcceptedTransport;
+	void StartTCPAcceptor();
+	void ResumeTCPAccept();
+
+	SOCKET m_UDPSocket;
+	void StartUDPSocket();
+		
+	virtual void RemoveTransport(Transport* client) override;
 	
-	void CreateListenSocket();	;	
-	void RemoveClient(Transport* client);
+	void CreateListenSocket();
+	void DeleteListenSocket();
+
+	virtual bool OnRecived(Transport* transport, DWORD dwBytesTransfered) override;
+
+	Server();
+	~Server();	
+	
+	
 };

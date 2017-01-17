@@ -1,32 +1,23 @@
 #include "server.h"
 
-Server server;
-
-unsigned __stdcall ServerMain(void*)
-{
-	cout << "ServerMain" << endl;
-	
-	server.ThreadMain();
-	return 0;
-}
 
 
 
 
 void Server::ThreadMain()
 {
-	CreateIOCP();
-	CreateRecvThreadPool();	
-	CreateListenSocket();
+	StartTCPAcceptor();
 
-	while (!g_ServerQuit)
-	{
-		Acceptor();
-	};	
+	StartUDPSocket();
+	//Acceptor();
+	
 
+	while (!m_Quit)
+	{		
+		//Acceptor();
+		Sleep(100);
+	};
 }
-
-
 
 
 void Server::Acceptor()
@@ -42,81 +33,233 @@ void Server::Acceptor()
 		WriteToConsole("\nError occurred while accepting socket: %ld.", WSAGetLastError());
 	}
 
-	auto client = new Transport(this, clientSocket);
+	auto transport = NewTransport(clientSocket);
 	
-	AssociateWithIOCP(client);
+	AssociateWithIOCP(transport);
 
-	m_Socket2Clients.insert(make_pair(client->m_ClientSocket, client));
-
+	if (!transport->Recive())
+	{
+		throw SYS_EXCEPTION;
+	}
 }
 
 
 
-
-void Server::AssociateWithIOCP(Server::Transport * client)
+void Server::StartTCPAcceptor()
 {
-	//Associate the socket with IOCP
-	HANDLE hTemp = CreateIoCompletionPort((HANDLE)client->m_ClientSocket, m_hIOCompletionPort, (DWORD)client, 0);
+	HANDLE hTemp = CreateIoCompletionPort((HANDLE)m_ListenSocket, m_hIOCompletionPort, (ULONG_PTR)&m_ListenSocket, 0);
+
 
 	if (NULL == hTemp)
 	{
-		throw SYS_EXCEPTION;		
+		WriteToConsole("AssociateWithIOCP GetLastError == %i", GetLastError());
+		throw SYS_EXCEPTION;
+	}
+	
+	
+	GUID GuidAcceptEx = WSAID_ACCEPTEX;
+	DWORD dwBytes = 0;
+
+	int iResult = WSAIoctl(m_ListenSocket, SIO_GET_EXTENSION_FUNCTION_POINTER,
+		&GuidAcceptEx, sizeof(GuidAcceptEx),
+		&m_lpfnAcceptEx, sizeof(m_lpfnAcceptEx),
+		&dwBytes, NULL, NULL);
+
+	if (iResult == SOCKET_ERROR)
+	{
+		throw SYS_EXCEPTION;
 	}
 
+	//ASSERT(dwBytes == 0);
+		
+
+	ResumeTCPAccept();
+	
+
+
+
+	
+}
+
+void Server::StartUDPSocket()
+{
+	SOCKET m_UDPSocket = WSASocket(AF_INET, SOCK_DGRAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
+
+	if (INVALID_SOCKET == m_UDPSocket)
+	{
+		throw SYS_EXCEPTION;
+	}
+
+	struct addrinfo serverAddress;
+	struct addrinfo *resolvedServerAddress;
+	//Cleanup and Init with 0 the ServerAddress
+	ZeroMemory((char *)&serverAddress, sizeof(serverAddress));
+	ZeroMemory((char *)&resolvedServerAddress, sizeof(resolvedServerAddress));
+
+	serverAddress.ai_family = AF_INET;
+	serverAddress.ai_socktype = SOCK_DGRAM;
+	serverAddress.ai_protocol = IPPROTO_UDP;
+
+	// Resolve the TCPSERVER address and port
+	if (getaddrinfo("127.0.0.1", SERVER_PORT, &serverAddress, &resolvedServerAddress))
+		throw SYS_EXCEPTION;
+	
+	if (SOCKET_ERROR == bind(m_UDPSocket, (struct sockaddr *) resolvedServerAddress, sizeof(resolvedServerAddress)))
+		throw SYS_EXCEPTION;
+	
+	freeaddrinfo(resolvedServerAddress);	
+	
+
+	UDPTransport* transport = NewUDPTransport(m_UDPSocket);
+	AssociateWithIOCP(transport);
+	
+	if (!transport->Recive())
+	{
+		throw SYS_EXCEPTION;
+	}	
+}
+
+void Server::RemoveTransport(Transport* client)
+{
+	if ((SOCKET*)client == &m_ListenSocket)
+	{
+		//
+		WriteToConsole("m_ListenSocket removed");
+		DeleteListenSocket();
+	}
+	else
+	{
+		IOCPBase::RemoveTransport(client);
+	}
 }
 
 void Server::CreateListenSocket()
 {
-	struct sockaddr_in serverAddress;
-
 	//Overlapped I/O follows the model established in Windows and can be performed only on 
 	//sockets created through the WSASocket function 
-	m_ListenSocket = WSASocket(AF_INET, SOCK_STREAM, 0, NULL, 0, 0);
+	m_ListenSocket = WSASocket(AF_INET, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
 
 	if (INVALID_SOCKET == m_ListenSocket)
 	{
-		printf("\nError occurred while opening socket: %d.", WSAGetLastError());
-		return;
+		throw SYS_EXCEPTION;
 	}
 
+	struct sockaddr_in serverAddress;
 	//Cleanup and Init with 0 the ServerAddress
 	ZeroMemory((char *)&serverAddress, sizeof(serverAddress));
 
 	serverAddress.sin_family = AF_INET;
 	serverAddress.sin_addr.s_addr = INADDR_ANY; //WinSock will supply address
-	serverAddress.sin_port = htons(SERVER_PORT);    //comes from commandline
+	serverAddress.sin_port = htons( atoi(SERVER_PORT) );    //comes from commandline
 													//Assign local address and port number
 	if (SOCKET_ERROR == bind(m_ListenSocket, (struct sockaddr *) &serverAddress, sizeof(serverAddress)))
-	{
-		closesocket(m_ListenSocket);
-		printf("\nError occurred while binding.");
-
-	}
-	else
-	{
-		printf("\nbind() successful.");
-	}
+			throw SYS_EXCEPTION;
+	
+	WriteToConsole("\nbind() successful.");
+	
 
 	//Make the socket a listening socket
 	if (SOCKET_ERROR == listen(m_ListenSocket, SOMAXCONN))
-	{
-		closesocket(m_ListenSocket);
-		printf("\nError occurred while listening.");
-		return;
-	}
-	else
-	{
-		printf("\nlisten() successful.");
-	}
+		throw SYS_EXCEPTION;
+	
+	WriteToConsole("\nlisten() successful.");
+	
 }
 
 
 
+void Server::DeleteListenSocket()
+{
+	if (m_ListenSocket != INVALID_SOCKET)
+	{
+		closesocket(m_ListenSocket);
+		m_ListenSocket = INVALID_SOCKET;
+	}
+}
+
+bool Server::OnRecived(Transport* transport, DWORD dwBytesTransfered)
+{
+	if (transport == (Transport*)&m_ListenSocket)
+	{
+		int iResult = 0;
+
+		iResult = setsockopt(transport->m_ClientSocket, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT,
+			(char *)&m_ListenSocket, sizeof(m_ListenSocket));
+
+		transport = m_AcceptedTransport;
+
+		ResumeTCPAccept();
+	}
+
+	
+	transport->m_CurrRecived += dwBytesTransfered;
+
+	transport->m_TotalRecived += dwBytesTransfered;
+
+	uint32_t* pbuffer = (uint32_t*)transport->m_RecvBuffer.data();
+
+	while (transport->m_CurrRecived >= sizeof(uint32_t))
+	{
+		uint32_t numOfInts = *pbuffer;
+
+		if (!transport->Send((char*)g_NETDATA, numOfInts * sizeof(uint32_t)))
+		{
+			return false;
+		}
 
 
-void Server::RemoveClient(Transport* client)
-{	
-	m_Socket2Clients.erase(client->m_ClientSocket);
+		transport->m_CurrRecived -= sizeof(uint32_t);
+		++pbuffer;		
+	}
+
+
+	if (!transport->Recive())
+	{
+		WriteToConsole("%s: transport->Recive error", m_Prefix.c_str());
+		return false;
+	}
+
+	return true;
+}
+
+Server::Server() : m_Quit(false), m_ListenSocket(INVALID_SOCKET), m_lpfnAcceptEx(NULL), m_AcceptedTransport(NULL)
+{
+	m_Prefix = "Server";
+	CreateListenSocket();
+}
+
+Server::~Server()
+{
+	DestroyRecvThreadPool();
+	DeleteListenSocket();
+}
+
+void Server::ResumeTCPAccept()
+{
+	SOCKET socket = WSASocket(AF_INET, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
+
+	if (socket == INVALID_SOCKET)
+	{
+		throw SYS_EXCEPTION;
+	}
+
+	auto transport = NewTransport(socket);
+
+	AssociateWithIOCP(transport);
+
+
+	BOOL result = m_lpfnAcceptEx(m_ListenSocket, socket, (PVOID)transport->m_RecvBuffer.data(), transport->m_RecvBuffer.size() - ((sizeof(sockaddr_in) + 16) * 2),
+		sizeof(sockaddr_in) + 16, sizeof(sockaddr_in) + 16,
+		NULL, &transport->m_ReciveOverlapped);
+
+
+	if (result == FALSE && WSAGetLastError() != WSA_IO_PENDING)
+	{
+		WriteToConsole("AcceptEx Error! WSAGetLastError %i", WSAGetLastError());
+		throw SYS_EXCEPTION;
+	}
+
+	m_AcceptedTransport = transport;
 }
 
 ////This thread will look for accept event
@@ -144,137 +287,3 @@ void Server::RemoveClient(Transport* client)
 //}
 
 
-
-void Server::RecvThread()
-{
-	void *lpContext = NULL;
-	OVERLAPPED       *pOverlapped = NULL;
-	Transport   *pClientContext = NULL;
-	DWORD            dwBytesTransfered = 0;
-	int nBytesRecv = 0;
-	int nBytesSent = 0;
-	DWORD             dwBytes = 0, dwFlags = 0;
-
-	//Worker thread will be around to process requests, until a Shutdown event is not Signaled.
-	while (true)
-	{
-		BOOL bReturn = GetQueuedCompletionStatus(
-			m_hIOCompletionPort,
-			&dwBytesTransfered,
-			(LPDWORD)&lpContext,
-			&pOverlapped,
-			INFINITE);
-
-
-		if (bReturn)
-		{
-			assert(pOverlapped);
-
-			if (lpContext == (void*)&server)
-			{
-				//Quiting
-				return;
-			}
-
-			Transport* client = (Transport*)lpContext;
-
-			if (dwBytesTransfered > 0)
-			{
-				if (!client->OnRecived(dwBytesTransfered))
-				{
-
-					RemoveClient(client);
-				}
-			}
-			else
-			{
-				WriteToConsole("client shutdown");
-				RemoveClient(client);
-			}
-
-		}
-		else
-		{
-
-			if (pOverlapped)
-			{
-				WriteToConsole("client error");
-				RemoveClient((Transport*)lpContext);
-			}
-			else
-			{
-				throw SYS_EXCEPTION;
-			}
-		}
-	}
-}
-	
-Server::Transport::Transport(Server* server, SOCKET clientSocket) : m_Server(server), m_ClientSocket(clientSocket)
-{
-	ZeroMemory(&m_SendOverlapped, sizeof(OVERLAPPED));
-	ZeroMemory(&m_ReciveOverlapped, sizeof(OVERLAPPED));	
-	m_RecvBuffer.resize(g_NETDATA_SIZE);
-
-	static int id = 0;
-	m_Id = id++;
-}
-
-bool Server::Transport::Send(DWORD numOfInts)
-{
-	DWORD dwBytes;
-
-	WSABUF buffer;
-	buffer.buf = (CHAR*)g_NETDATA;
-	buffer.len = numOfInts;
-
-	auto nBytesSent = WSASend(m_ClientSocket, &buffer, 1,&dwBytes, 0, &m_SendOverlapped, NULL);
-
-	if ((SOCKET_ERROR != nBytesSent) || (WSA_IO_PENDING == WSAGetLastError()))
-		return true;
-	else
-		return false;
-}
-
-bool Server::Transport::Recive()
-{
-	DWORD dwBytes;
-
-	WSABUF buffer;
-	buffer.buf = (CHAR*)m_RecvBuffer.data();
-	buffer.len = m_RecvBuffer.size();
-
-	auto nBytesRecv = WSARecv(m_ClientSocket, &buffer, 1, &dwBytes, 0, &m_ReciveOverlapped, NULL);
-
-	if ((SOCKET_ERROR != nBytesRecv) || (WSA_IO_PENDING == WSAGetLastError()))
-		return true;
-	else
-		return false;
-}
-
-bool Server::Transport::OnRecived(DWORD dwBytesTransfered)
-{
-	m_TotalRecived += dwBytesTransfered;
-
-	if (m_TotalRecived < sizeof(DWORD))
-	{
-		return true;
-	}
-	else
-	{
-		if (!Send(*(DWORD*)m_RecvBuffer.data()))
-		{
-			return false;
-		}
-
-		return Recive();
-	}
-}
-
-Server::Transport::~Transport()
-{
-	if (m_ClientSocket != INVALID_SOCKET)
-	{
-		closesocket(m_ClientSocket);
-		m_ClientSocket = INVALID_SOCKET;
-	}
-}

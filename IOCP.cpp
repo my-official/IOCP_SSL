@@ -3,27 +3,52 @@
 
 #include "stdafx.h"
 
+#include "Threads.h"
+#include "Exceptions.h"
+#include "base.h"
 #include "server.h"
 #include "client.h"
 
 
-uintptr_t g_Threads[] = { NULL, NULL };
-DWORD g_ThreadsNum = sizeof(g_Threads) / sizeof(decltype(g_Threads[0]));
-
-
 #define RETURN  { char symbol; cin >> symbol; } return
 
-
-
-
-
-
-
+template <class T>
+class ProgramThread : public Thread
+{
+public:
+	T* m_ClientOrServer = NULL;
+	virtual void ThreadMain() override
+	{
+		T clientOrServer;
+		m_ClientOrServer = &clientOrServer;
+		clientOrServer.ThreadMain();
+		m_ClientOrServer = NULL;
+	}
+	virtual void SendQuit() override
+	{
+		ASSERT(m_ClientOrServer);
+		m_ClientOrServer->m_Quit = true;
+	}
+};
 
 
 
 int main()
 {
+
+
+	for (uint32_t c = 0, size = g_NETDATA_SIZE; c < size; c++)
+	{
+		g_NETDATA[c] = c;
+	}
+
+	cout << "s or c" << endl;
+
+	char mode;
+	cin >> mode;
+
+
+
 	WSADATA wsaData;
 	ZeroMemory(&wsaData, sizeof(wsaData));
 
@@ -33,47 +58,108 @@ int main()
 	if (NO_ERROR != nResult)
 	{
 		cout << "nError occurred while executing WSAStartup()" << endl;
-		RETURN -1; //error
+		RETURN - 1; //error
 	}
-	
-	ZeroMemory(&g_csConsole, sizeof(CRITICAL_SECTION));
 
-	InitializeCriticalSection(&g_csConsole);
+	ZeroMemory(&g_ConsoleCS, sizeof(CRITICAL_SECTION));
 
-	g_Threads[0] = _beginthreadex(NULL, 1024 * 1024 * 2, ServerMain, NULL, 0, NULL);
-	if (g_Threads[0] == 0)
+	InitializeCriticalSection(&g_ConsoleCS);
+
+	Thread* thread;
+
+	if (mode == 's')
 	{
-		cout << "nError occurred while executing _beginthreadex()" << endl;
-		RETURN -1;
+		thread = new ProgramThread<Server>;
+	}
+	else
+	{		
+		thread = new ProgramThread<Client>;
 	}
 
-	g_Threads[1] = _beginthreadex(NULL, 1024 * 1024 * 2, ClientMain, NULL, 0, NULL);
-	if (g_Threads[1] == 0)
-	{
-		cout << "nError occurred while executing _beginthreadex()" << endl;
-		RETURN - 1;
-	}
-	
+	Thread::RunThread(*thread);
+
 	{
 		char symbol;
-		cin >> symbol;
-		g_ServerQuit = true;
-		g_ClientQuit = true;
+		cin >> symbol;		
+		
 	}
 
-	DWORD result = WaitForMultipleObjects(g_ThreadsNum, (HANDLE*)g_Threads,TRUE, INFINITE);
+	thread->Quit();
+	delete thread;
 
-	if (result == WAIT_FAILED)
-	{
-		cout << "WaitForMultipleObjects error " << result << " GetLastError " << GetLastError();
-		RETURN -1; //error
-	}
 	
 
-	DeleteCriticalSection(&g_csConsole);
+
+	DeleteCriticalSection(&g_ConsoleCS);
 	
 	cout << "Success finished!" << endl;
 
 	RETURN 0;
 }
 
+
+
+int main2()
+{
+	try
+	{
+
+		for (uint32_t c = 0, size = g_NETDATA_SIZE; c < size; c++)
+		{
+			g_NETDATA[c] = c;
+		}
+
+
+		WSADATA wsaData;
+		ZeroMemory(&wsaData, sizeof(wsaData));
+
+		int nResult;
+		nResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
+
+		
+		if (NO_ERROR != nResult)
+		{
+			throw SYS_EXCEPTION;			
+		}
+
+		ZeroMemory(&g_ConsoleCS, sizeof(CRITICAL_SECTION));
+
+		InitializeCriticalSection(&g_ConsoleCS);
+
+		auto serverThread = new ProgramThread<Server>;
+		Thread::RunThread(*serverThread);
+		Sleep(100);
+		auto clientThread = new ProgramThread<Client>;
+		Thread::RunThread(*clientThread);
+
+
+		{
+			char symbol;
+			cin >> symbol;
+		}
+
+		clientThread->Quit();
+		delete clientThread;
+		serverThread->Quit();
+		delete serverThread;
+
+
+		DeleteCriticalSection(&g_ConsoleCS);
+
+		cout << "Success finished!" << endl;
+
+		return 0;
+
+	}
+	catch (SYS_EXCEPTION_TYPE& e)
+	{		
+		WriteToConsole("Main thread SYS_EXCEPTION %s", e.m_Message);
+	}
+	catch (std::exception& e)
+	{
+		WriteToConsole("Main thread std::exception %s", e.what());
+	}
+
+	return -1;
+
+}
