@@ -3,7 +3,7 @@
 #include "Threads.h"
 #include "Exceptions.h"
 
-const char SERVER_PORT[] = "5500";
+const char SERVER_PORT[] = "55555";
 
 extern CRITICAL_SECTION g_ConsoleCS;
 
@@ -11,27 +11,42 @@ extern CRITICAL_SECTION g_ConsoleCS;
 void WriteToConsole(char *szFormat, ...);
 
 
+extern LPFN_ACCEPTEX g_lpfnAcceptEx;
+extern LPFN_GETACCEPTEXSOCKADDRS g_lpfnGetAcceptExSockaddrs;
 
-const uint32_t g_NETDATA_SIZE = 15000;
+const uint32_t g_NETDATA_SIZE = 30000;
 extern uint32_t g_NETDATA[g_NETDATA_SIZE];
 
-
+class Socketable;
 class Transport;
+class TCPTransport;
+class SSLTransport;
+class UDPTransport;
+
+class UDPDomain;
+class TCPServer;
+class SSLServer;
+
+
+
 
 class IOCPBase
 {	
 public:
 	IOCPBase();
 	virtual ~IOCPBase();
-protected:
+
 	HANDLE m_hIOCompletionPort;
 			
-	void Recv();
+	virtual void Recv();
 
-	CRITICAL_SECTION		m_Socket2ClientsCS;
-	map<SOCKET, Transport* > m_Socket2Clients;
+	CRITICAL_SECTION		m_Socket2TransportsCS;
+	map<SOCKET, Transport* > m_Socket2Transports;		
 
-	void AssociateWithIOCP(Transport* transport);
+
+	void AssociateWithIOCP(Socketable* socketable);	
+	void AddTransport(Transport* transport);
+
 	virtual void RemoveTransport(Transport* client);
 		
 	void CreateIOCP();
@@ -44,11 +59,23 @@ protected:
 	void PrintTotalRecived();
 
 
-	virtual Transport* NewTransport(SOCKET socket);
-	virtual UDPTransport* NewUDPTransport(SOCKET socket);
+	/////////////TCP
+	TCPServer* m_TCPServer;	
+	
+	////////////SSL
+	SSLServer* m_SSLServer;
 
+	/////////////UDP	
+	UDPDomain* m_UDPDomain;
+	void StartUDP();
+	
+	virtual TCPTransport* NewTCPTransport(SOCKET socket = INVALID_SOCKET);
+	virtual UDPTransport* NewUDPTransport(UDPDomain* udpDomain);
+	virtual SSLTransport* NewSSLTransport(SOCKET socket = INVALID_SOCKET);
 public:
-	virtual bool OnRecived(Transport* transport, DWORD dwBytesTransfered) = 0;
+	virtual bool OnTransportConnected(TCPTransport* transport) { return true; }
+	virtual bool OnUDPNewRemoteAddress(DWORD dwBytesTransfered, UDPTransport* udpTransport) = 0;
+	virtual bool OnRecived(Transport* transport) = 0;
 
 private:
 	static DWORD sm_NumRecvThreads;
@@ -79,52 +106,32 @@ private:
 		volatile bool m_Quit;
 	};
 
-	TimerThread m_TimerThread;
+	TimerThread m_TimerThread;	
+};
+
+
+class HLTransportData
+{
+public:
+	uint32_t m_CurrentNumOffset = 0;
+};
+
+template <class TransportT>
+class HLTransport : public TransportT, public HLTransportData
+{
+public:
+	using TransportT::TransportT;
 };
 
 
 
-class Transport
+
+class HL_IOCP : public IOCPBase
 {
-public:	
-	IOCPBase* m_IOCPBaseParent;
+public:
+	HLTransportData* GetHLTransportData(Transport* transport);
 
-	SOCKET m_ClientSocket;
-		
-		
-
-	WSAOVERLAPPED m_SendOverlapped;
-	virtual bool Send(char* data, ULONG size);
-
-
-	vector<BYTE> m_RecvBuffer;
-
-	DWORD m_TotalRecived;
-	DWORD m_CurrRecived;
-	DWORD m_CurrProcessed;
-
-	uint32_t m_ErrorCounter; 
-
-
-	OVERLAPPED m_ReciveOverlapped;
-	virtual bool Recive();
-
-
-
-
-	Transport(IOCPBase* iocpBase, SOCKET clientSocket);
-	~Transport();
-};
-
-
-class UDPTransport : public Transport
-{
-public:	
-	struct sockaddr		m_Address;
-	INT					m_AddressLen;
-
-	virtual bool Send(char* data, ULONG size);
-	virtual bool Recive();
-
-	UDPTransport(IOCPBase* iocpBase, SOCKET clientSocket);	
+	virtual TCPTransport* NewTCPTransport(SOCKET socket = INVALID_SOCKET) override;
+	virtual UDPTransport* NewUDPTransport(UDPDomain* udpDomain) override;
+	virtual SSLTransport* NewSSLTransport(SOCKET socket = INVALID_SOCKET) override;
 };

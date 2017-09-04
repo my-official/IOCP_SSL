@@ -1,178 +1,130 @@
 #include "client.h"
+#include "Transport.h"
 
-const uint32_t numUInt32ForRecv = 15000;
+const uint32_t g_NumUInt32ForRecv = 15000;
+const uint32_t g_BroadcastData = 0;
 
 void Client::ThreadMain()
-{
-	for (int c = 0, size = 2; c < size; c++)
-	{
-		SOCKET socket = NewUDPConnection();
-		Transport* transport = NewTransport(socket);
-		AssociateWithIOCP(transport);	
-
-		ASSERT(numUInt32ForRecv <= g_NETDATA_SIZE);
-		transport->Recive();
-		transport->Send((char*)&numUInt32ForRecv, sizeof(numUInt32ForRecv));
-	}
-
+{		
+	m_UDPDomain = new UDPDomain(this);
+	
+	m_UDPDomain->SendBroadcast((char*)&g_BroadcastData, sizeof(g_BroadcastData));
+	m_UDPDomain->StartReceiving();
+	
+	
 	while (!m_Quit)
 	{
-		Sleep(5000);
-
-
-		//for (int c = 0, size = 2; c < size; c++)
-		//{
-		//	SOCKET socket = NewTCPConnection();
-		//	Transport* transport = NewTransport(socket);
-		//	AssociateWithIOCP(transport);
-
-		//	ASSERT(numUInt32ForRecv <= g_NETDATA_SIZE);
-		//	transport->Recive();
-		//	transport->Send((char*)&numUInt32ForRecv, sizeof(numUInt32ForRecv));
-		//}
-
-		//decltype(m_ParseQueue) parseQueue;
-
-		//EnterCriticalSection(&m_ParseQueueCS);
-
-		//if (!m_ParseQueue.empty())
-		//{
-		//	m_ParseQueue.swap(parseQueue);			
-		//	
-		//	LeaveCriticalSection(&m_ParseQueueCS);
-		//	
-		//	while (!parseQueue.empty())
-		//	{
-		//		Transport* transport = parseQueue.back();
-		//		parseQueue.pop();
-
-		//		ProcessTransport(transport);
-		//	}
-		//}
-		//else
-		//{
-		//	LeaveCriticalSection(&m_ParseQueueCS);
-		//	auto result = WaitForSingleObject(m_hSignal, 200);
-
-		//	if (result != WAIT_OBJECT_0 && result != WAIT_TIMEOUT)
-		//	{
-		//		throw SYS_EXCEPTION;
-		//	}
-		//}		
+		Sleep(200);
 	}
-
-}
-
-SOCKET Client::NewTCPConnection()
-{	
-	SOCKET socket = INVALID_SOCKET;
-
-	struct addrinfo *resolvedServerAddress = NULL,
-		*ptr = NULL,
-		hints;
-
-
-	ZeroMemory(&hints, sizeof(hints));
-	hints.ai_family = AF_INET;
-	hints.ai_socktype = SOCK_STREAM;
-	hints.ai_protocol = IPPROTO_TCP;
-
-	// Resolve the TCPSERVER address and port
-	if (getaddrinfo("127.0.0.1", SERVER_PORT, &hints, &resolvedServerAddress))
-		return false;
-
-
-
-	// Attempt to connect to an address until one succeeds
-	for (ptr = resolvedServerAddress; ptr != NULL; ptr = ptr->ai_next) {
-
-		// Create a SOCKET for connecting to TCPSERVER		
-		//socket = socket(ptr->ai_family, ptr->ai_socktype, ptr->ai_protocol);
-		socket = WSASocket(AF_INET, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
-
-		if (INVALID_SOCKET == socket)
-		{
-			throw SYS_EXCEPTION;		
-		}
-
-		// Connect to TCPSERVER.
-		if (connect(socket, ptr->ai_addr, (int)ptr->ai_addrlen) == SOCKET_ERROR)
-		{
-			WriteToConsole("connect Error. %i", WSAGetLastError());
-			closesocket(socket);
-			socket = INVALID_SOCKET;
-			continue;
-		}
-		break;
-	}
-
-	freeaddrinfo(resolvedServerAddress);
-
-	if (socket == INVALID_SOCKET)
-		throw SYS_EXCEPTION;
-
-
-	return socket;
 }
 
 
-SOCKET Client::NewUDPConnection()
+SOCKET Client::NewUDPSocket()
 {
-	SOCKET socket = WSASocket(AF_INET, SOCK_DGRAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
+	SOCKET socket = WSASocket(AF_INET, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, WSA_FLAG_OVERLAPPED);
 
 	if (INVALID_SOCKET == socket)
 	{
-		throw SYS_EXCEPTION;
+		throw EXCEPTION(WSAException());
 	}
-
-	struct addrinfo serverAddress;
-	struct addrinfo *resolvedServerAddress;
-	//Cleanup and Init with 0 the ServerAddress
-	ZeroMemory((char *)&serverAddress, sizeof(serverAddress));
-	ZeroMemory((char *)&resolvedServerAddress, sizeof(resolvedServerAddress));
-
-	serverAddress.ai_family = AF_INET;
-	serverAddress.ai_socktype = SOCK_DGRAM;
-	serverAddress.ai_protocol = IPPROTO_UDP;
-
-	// Resolve the TCPSERVER address and port
-	if (getaddrinfo("127.0.0.1", SERVER_PORT, &serverAddress, &resolvedServerAddress))
-		throw SYS_EXCEPTION;
-
-	// Connect to TCPSERVER.
-	if (connect(socket, resolvedServerAddress->ai_addr, (int)resolvedServerAddress->ai_addrlen) == SOCKET_ERROR)
-		throw SYS_EXCEPTION;
-
-	freeaddrinfo(resolvedServerAddress);
 
 	return socket;
 }
 
-bool Client::OnRecived(Transport* transport, DWORD dwBytesTransfered)
+void Client::SetupAdditionalConnections()
 {
-	transport->m_TotalRecived += dwBytesTransfered;	
-
-	transport->m_CurrRecived += dwBytesTransfered;
-
-
-
-	if (transport->m_CurrRecived >= numUInt32ForRecv * sizeof(uint32_t))
+	for (int c = 0, size = 25; c < size; c++)
 	{		
-		ASSERT(transport->m_CurrRecived == numUInt32ForRecv * sizeof(uint32_t));
+		TCPTransport* transport = NewTCPTransport();		
+
+		transport->Connect(m_ServerAddress, m_ServerPort);
+
+		AssociateWithIOCP(transport);
+		AddTransport(transport);
+
+		
+		transport->StartReceiving();
+		transport->Send((char*)&g_NumUInt32ForRecv, sizeof(g_NumUInt32ForRecv));
+		
+		static_assert(g_NumUInt32ForRecv <= g_NETDATA_SIZE, "g_NumUInt32ForRecv <= g_NETDATA_SIZE");		
+	}
+
+	for (int c = 0, size = 10; c < size; c++)
+	{
+		SSLTransport* transport = NewSSLTransport();
+
+		transport->Connect(m_ServerAddress,  to_string( (stoi(m_ServerPort) + 1) ) );
+		//transport->Connect("localhost", "65000");
+		AssociateWithIOCP(transport);
+		AddTransport(transport);		
+		transport->StartReceiving();
+
+		static_assert(g_NumUInt32ForRecv <= g_NETDATA_SIZE, "g_NumUInt32ForRecv <= g_NETDATA_SIZE");
+	}
+
+	//for (int c = 0, size = 1; c < size; c++)
+	//{
+	//	UDPTransport* transport = NewUDPTransport(m_UDPDomain);
+	//	AddTransport(transport);
+
+	//	transport->Send((char*)&g_NumUInt32ForRecv, sizeof(g_NumUInt32ForRecv));
+	//}
+
+	for (int c = 0, size = 1; c < size; c++)
+	{
+		UDPDomain* domain = new UDPDomain(this);
+		/*AddTransport(domain);
+
+		assert(numUInt32ForRecv <= g_NETDATA_SIZE);*/
+
+	//	domain->Send((char*)&g_NumUInt32ForRecv, sizeof(g_NumUInt32ForRecv));
+	}
+}
+
+bool Client::OnUDPNewRemoteAddress(DWORD dwBytesTransfered, UDPTransport* udpTransport)
+{
+	if (m_ServerAddress.empty())
+	{
+		char* addr = inet_ntoa(m_UDPDomain->m_RecvAddress.sin_addr);
+		if (!addr)
+			throw EXCEPTION(WSAException(udpTransport->m_Socket));
+		m_ServerAddress = addr;
+		m_ServerPort = to_string(htons(m_UDPDomain->m_RecvAddress.sin_port));
+
+		SetupAdditionalConnections();
+	}
+
+	udpTransport->m_CurrRecived = 0;
+	udpTransport->Send((char*)&g_NumUInt32ForRecv, sizeof(g_NumUInt32ForRecv));
+	return true;
+
+	//return false;
+}
+
+bool Client::OnTransportConnected(TCPTransport* transport)
+{	
+	transport->Send((char*)&g_NumUInt32ForRecv, sizeof(g_NumUInt32ForRecv));
+	return true;
+}
+
+bool Client::OnRecived(Transport* transport)
+{	
+	if (transport->m_CurrRecived >= g_NumUInt32ForRecv * sizeof(uint32_t))
+	{		
+		//assert(transport->m_CurrRecived == g_NumUInt32ForRecv * sizeof(uint32_t));
 		
 		ProcessTransport(transport);
 
-		//AddTransportForProcess(transport);		
+		//AddTransportForProcess(transport);
 
 		transport->m_CurrRecived = 0;
 	}
 
-
-	if (!transport->Recive())
-	{
-		WriteToConsole("%s: transport->Recive error", m_Prefix.c_str());
-		return false;
-	}
+	//if (!transport->Recive())
+	//{
+	//	WriteToConsole("%s: transport->Recive error", m_Prefix.c_str());
+	//	return false;
+	//}
 
 	return true;
 }
@@ -180,21 +132,21 @@ bool Client::OnRecived(Transport* transport, DWORD dwBytesTransfered)
 Client::Client() : m_Quit(false), m_hSignal(NULL)
 {
 	m_Prefix = "Client";
+	
 
 	m_hSignal = CreateEvent(NULL, FALSE, FALSE, "ClientSiganl");
 
 	if (m_hSignal == NULL)
 	{
-		throw SYS_EXCEPTION;
+		throw EXCEPTION(SystemException());
 	}
 
 	ZeroMemory(&m_ParseQueueCS, sizeof(CRITICAL_SECTION));
-	InitializeCriticalSection(&m_ParseQueueCS);
+	InitializeCriticalSection(&m_ParseQueueCS);	
 }
 
 Client::~Client()
-{	
-	DestroyRecvThreadPool();	
+{		
 	CloseHandle(m_hSignal);
 
 	DeleteCriticalSection(&m_ParseQueueCS);
@@ -203,7 +155,7 @@ Client::~Client()
 
 void Client::Validate(Transport* transport)
 {
-	uint32_t* buffer = (uint32_t*)transport->m_RecvBuffer.data();
+	uint32_t* buffer = (uint32_t*)transport->GetRecvBuffer();
 	uint32_t control_value = buffer[0];
 	for (uint32_t c = 0, size = transport->m_CurrRecived / sizeof(uint32_t); c < size; c++)
 	{
@@ -213,8 +165,10 @@ void Client::Validate(Transport* transport)
 
 void Client::FastValidate(Transport* transport)
 {
-	uint32_t* buffer = (uint32_t*)transport->m_RecvBuffer.data();
+	uint32_t* buffer = (uint32_t*)transport->GetRecvBuffer();
 
+	HLTransportData* hlTransportData = GetHLTransportData(transport);		
+	auto& currentNumOffset = hlTransportData->m_CurrentNumOffset;
 			
 	//if ( transport->m_CurrRecived < (numUInt32ForRecv * sizeof(uint32_t)) )
 	//{
@@ -223,14 +177,20 @@ void Client::FastValidate(Transport* transport)
 	//}
 	//else
 	{
-		transport->m_ErrorCounter += buffer[0] != 0;
-		transport->m_ErrorCounter += (buffer[numUInt32ForRecv - 1] != (numUInt32ForRecv - 1));
+		transport->m_ErrorCounter += buffer[0] != currentNumOffset;
+		transport->m_ErrorCounter += (buffer[g_NumUInt32ForRecv - 1] != (g_NumUInt32ForRecv + currentNumOffset - 1));
+
+		currentNumOffset += g_NumUInt32ForRecv;
+		if (currentNumOffset >= g_NETDATA_SIZE)
+		{
+			currentNumOffset = 0;
+		}
 	}
 	
 	
 }
 
-void Client::AddTransportForProcess(Transport* transport)
+void Client::AddTransportForProcess(TCPTransport* transport)
 {
 	EnterCriticalSection(&m_ParseQueueCS);
 
@@ -248,23 +208,24 @@ void Client::ProcessTransport(Transport* transport)
 	//Validate(transport);
 		
 	//transport->m_CurrProcessed += numUInt32ForRecv * sizeof(numUInt32ForRecv);	
-	ASSERT(numUInt32ForRecv <= g_NETDATA_SIZE);	
+	static_assert(g_NumUInt32ForRecv <= g_NETDATA_SIZE, "g_NumUInt32ForRecv <= g_NETDATA_SIZE");	
 	//transport->Send((char*)&numUInt32ForRecv, sizeof(numUInt32ForRecv));
 	
-	//ASSERT(transport->m_CurrRecived == 0);
+	//assert(transport->m_CurrRecived == 0);
 
 	//if (!transport->Recive())
 	//{
-	//	throw SYS_EXCEPTION;
+	//	throw EXCEPTION(SystemException());
 	//	WriteToConsole("%s: transport->Recive error", m_Prefix.c_str());
 	//	RemoveTransport(transport);
 	//}
 
+	transport->Send((char*)&g_NumUInt32ForRecv, sizeof(g_NumUInt32ForRecv));
 
-	if (!transport->Send((char*)&numUInt32ForRecv, sizeof(numUInt32ForRecv)))
-	{
-	//	throw SYS_EXCEPTION;
-		WriteToConsole("%s: transport->Send error", m_Prefix.c_str());		
-		RemoveTransport(transport);
-	}
+	//if (!)
+	//{
+	////	throw EXCEPTION(SystemException());
+	//	WriteToConsole("%s: transport->Send error", m_Prefix.c_str());		
+	//	RemoveTransport(transport);
+	//}
 }

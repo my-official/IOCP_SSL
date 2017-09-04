@@ -2,38 +2,25 @@
 
 #include "base.h"
 
+extern const char * server_cert_key_pem;
 
 unsigned __stdcall ServerMain(void*);
 
 
-class Server : public IOCPBase
+
+
+
+class Server : public HL_IOCP
 {
 public:	
 	volatile bool m_Quit;
-
-	SOCKET m_ListenSocket;	
 	
+	Server();
+		
 	void ThreadMain();
 
-	void Acceptor();
+	virtual bool OnUDPNewRemoteAddress(DWORD dwBytesTransfered, UDPTransport* udpTransport) override;
+	virtual bool OnRecived(Transport* transport) override;
 
-	LPFN_ACCEPTEX m_lpfnAcceptEx;
-	Transport * m_AcceptedTransport;
-	void StartTCPAcceptor();
-	void ResumeTCPAccept();
-
-	SOCKET m_UDPSocket;
-	void StartUDPSocket();
-		
-	virtual void RemoveTransport(Transport* client) override;
-	
-	void CreateListenSocket();
-	void DeleteListenSocket();
-
-	virtual bool OnRecived(Transport* transport, DWORD dwBytesTransfered) override;
-
-	Server();
-	~Server();	
-	
 	
 };

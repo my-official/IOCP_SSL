@@ -15,7 +15,7 @@ void Thread::Quit()
 	SendQuit();
 	if (!Join())
 	{
-		throw SYS_EXCEPTION;
+		throw EXCEPTION(SystemException());
 	}
 }
 
@@ -38,7 +38,7 @@ Thread::~Thread()
 
 bool Thread::RunThread(Thread& thread)
 {
-	ASSERT(thread.m_Finished);
+	assert(thread.m_Finished);
 	thread.m_Finished = false;
 
 	uintptr_t threadHandle = _beginthreadex(NULL, 1024 * 1024 * 2, &_threadMain, &thread, 0, NULL);
@@ -73,21 +73,26 @@ unsigned Thread::threadMain()
 	WriteToConsole("Thread %s started", m_ThreadName.c_str());
 	try
 	{	
-		ThreadMain();		
+		ThreadMain();
 		m_Finished = true;
 		return 0;
-	}
-	catch (SYS_EXCEPTION_TYPE& e)
+	}	
+	catch (RuntimeException& e)
 	{
-		m_Exception = e;
+		//m_Exception = e;
 		m_AnException = true;
-		WriteToConsole("SYS_EXCEPTION %s", e.m_Message);
+		WriteToConsole("RuntimeException: %s", e.ErrorMessage());
 	}
 	catch (std::exception& e)
 	{
 		m_Exception = e;
 		m_AnException = true;
-		WriteToConsole("std::exception %s", e.what());
+		WriteToConsole("std::exception: %s", e.what());
+	}
+	catch (...)
+	{		
+		m_AnException = true;
+		WriteToConsole("unknown exception");
 	}
 
 	m_Finished = true;

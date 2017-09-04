@@ -9,18 +9,30 @@ Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
 		Debug|x86 = Debug|x86
-		Release|x64 = Release|x64
-		Release|x86 = Release|x86
+		libressl-2.5.5|x64 = libressl-2.5.5|x64
+		libressl-2.5.5|x86 = libressl-2.5.5|x86
+		openssl-1.0.1u|x64 = openssl-1.0.1u|x64
+		openssl-1.0.1u|x86 = openssl-1.0.1u|x86
+		openssl-1.1.0f|x64 = openssl-1.1.0f|x64
+		openssl-1.1.0f|x86 = openssl-1.1.0f|x86
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
 		{4B15E14D-615A-4604-91C9-04149FF040B9}.Debug|x64.ActiveCfg = Debug|x64
 		{4B15E14D-615A-4604-91C9-04149FF040B9}.Debug|x64.Build.0 = Debug|x64
 		{4B15E14D-615A-4604-91C9-04149FF040B9}.Debug|x86.ActiveCfg = Debug|Win32
 		{4B15E14D-615A-4604-91C9-04149FF040B9}.Debug|x86.Build.0 = Debug|Win32
-		{4B15E14D-615A-4604-91C9-04149FF040B9}.Release|x64.ActiveCfg = Release|x64
-		{4B15E14D-615A-4604-91C9-04149FF040B9}.Release|x64.Build.0 = Release|x64
-		{4B15E14D-615A-4604-91C9-04149FF040B9}.Release|x86.ActiveCfg = Release|Win32
-		{4B15E14D-615A-4604-91C9-04149FF040B9}.Release|x86.Build.0 = Release|Win32
+		{4B15E14D-615A-4604-91C9-04149FF040B9}.libressl-2.5.5|x64.ActiveCfg = libressl-2.5.5|x64
+		{4B15E14D-615A-4604-91C9-04149FF040B9}.libressl-2.5.5|x64.Build.0 = libressl-2.5.5|x64
+		{4B15E14D-615A-4604-91C9-04149FF040B9}.libressl-2.5.5|x86.ActiveCfg = libressl-2.5.5|Win32
+		{4B15E14D-615A-4604-91C9-04149FF040B9}.libressl-2.5.5|x86.Build.0 = libressl-2.5.5|Win32
+		{4B15E14D-615A-4604-91C9-04149FF040B9}.openssl-1.0.1u|x64.ActiveCfg = openssl-1.0.1u|x64
+		{4B15E14D-615A-4604-91C9-04149FF040B9}.openssl-1.0.1u|x64.Build.0 = openssl-1.0.1u|x64
+		{4B15E14D-615A-4604-91C9-04149FF040B9}.openssl-1.0.1u|x86.ActiveCfg = openssl-1.0.1u|Win32
+		{4B15E14D-615A-4604-91C9-04149FF040B9}.openssl-1.0.1u|x86.Build.0 = openssl-1.0.1u|Win32
+		{4B15E14D-615A-4604-91C9-04149FF040B9}.openssl-1.1.0f|x64.ActiveCfg = openssl-1.1.0f|x64
+		{4B15E14D-615A-4604-91C9-04149FF040B9}.openssl-1.1.0f|x64.Build.0 = openssl-1.1.0f|x64
+		{4B15E14D-615A-4604-91C9-04149FF040B9}.openssl-1.1.0f|x86.ActiveCfg = openssl-1.1.0f|Win32
+		{4B15E14D-615A-4604-91C9-04149FF040B9}.openssl-1.1.0f|x86.Build.0 = openssl-1.1.0f|Win32
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

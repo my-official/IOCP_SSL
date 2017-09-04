@@ -1,7 +1,3 @@
-// stdafx.h: включаемый файл дл€ стандартных системных включаемых файлов
-// или включаемых файлов дл€ конкретного проекта, которые часто используютс€, но
-// не часто измен€ютс€
-//
 
 #pragma once
 
@@ -10,10 +6,8 @@
 #include <stdio.h>
 #include <tchar.h>
 
-//#include <cassert.h>
+#include <cassert>
 #include <cstdlib>
-// TODO: ”становите здесь ссылки на дополнительные заголовки, требующиес€ дл€ программы
-
 
 
 
@@ -22,10 +16,12 @@
 #include <vector>
 #include <queue>
 #include <map>
+#include <unordered_map>
 #include <deque>
 #include <algorithm>
 #include <stdexcept>
 #include <exception>
+#include <locale>
 using namespace std;
 
 #include <process.h>
@@ -38,3 +34,10 @@ using namespace std;
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <mswsock.h>
+
+
+
+//#include <openssl/opensslv.h>
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+#include <openssl/x509v3.h>

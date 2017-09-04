@@ -1,7 +1,11 @@
 #include "base.h"
+#include "Transport.h"
 
 volatile bool g_ServerQuit = false;
 volatile bool g_ClientQuit = false;
+
+LPFN_ACCEPTEX g_lpfnAcceptEx = nullptr;
+LPFN_GETACCEPTEXSOCKADDRS g_lpfnGetAcceptExSockaddrs = nullptr;
 
 uint32_t g_NETDATA[g_NETDATA_SIZE] = { 0 };
 
@@ -23,14 +27,15 @@ void WriteToConsole(char *szFormat, ...)
 	LeaveCriticalSection(&g_ConsoleCS);
 }
 
-DWORD IOCPBase::sm_NumRecvThreads = 1;
+DWORD IOCPBase::sm_NumRecvThreads = 4;
+
 
 
 void IOCPBase::Recv()
 {
-	void *lpContext = NULL;
+	ULONG_PTR lpContext = NULL;
 	OVERLAPPED       *pOverlapped = NULL;
-	Transport   *pClientContext = NULL;
+	TCPTransport   *pClientContext = NULL;
 	DWORD            dwBytesTransfered = 0;
 	int nBytesRecv = 0;
 	int nBytesSent = 0;
@@ -42,75 +47,110 @@ void IOCPBase::Recv()
 		BOOL bReturn = GetQueuedCompletionStatus(
 			m_hIOCompletionPort,
 			&dwBytesTransfered,
-			(LPDWORD)&lpContext,
+			&lpContext,
 			&pOverlapped,
 			INFINITE);
 
-
 		if (bReturn)
-		{			
-			if (lpContext == (IOCPBase*)this)
+		{
+			if (reinterpret_cast<IOCPBase*>(lpContext) == this)
 			{
 				//Quiting
 				return;
 			}
 
-			ASSERT(pOverlapped);
+			assert(pOverlapped);
 
-			Transport* transport = (Transport*)lpContext;
+			auto completable = reinterpret_cast<Socketable*>(lpContext);
 
-			if (dwBytesTransfered > 0)
+			//DWORD flag = 0;
+
+			//if ( WSAGetOverlappedResult(completable->m_Socket, pOverlapped, &dwBytesTransfered, FALSE, &flag) != TRUE)
+			//{
+			//	throw EXCEPTION( WSAException() );
+			//}
+
+			/*if (flag & MSG_PARTIAL)
 			{
-			//	transport->m_CurrRecived += dwBytesTransfered;
-				if (!OnRecived(transport, dwBytesTransfered))
-				{
-					RemoveTransport(transport);					
-				}				
-			}
-			else
-			{				
-				WriteToConsole("%s: transport shutdown", m_Prefix.c_str());
-				RemoveTransport(transport);
-			}
+				++flag;
+			}*/
 
+			//auto tcpTransport = dynamic_cast<TCPTransport*>(lpContext);
+			//
+	/*		if (dwBytesTransfered > 60000)
+			{
+				completable->Complition(dwBytesTransfered, pOverlapped);
+				return;
+			}*/
+
+			//DWORD size = std::min<DWORD>(dwBytesTransfered,sizeof(g_NETDATA) * 5);
+
+			completable->Complition(dwBytesTransfered, pOverlapped);
 		}
 		else
 		{
 			if (pOverlapped)
 			{
 				WriteToConsole("%s: transport error", m_Prefix.c_str());
-				RemoveTransport((Transport*)lpContext);
+			//	RemoveTransport((TCPTransport*)lpContext);
 			}
 			else
 			{
-				throw SYS_EXCEPTION;
+				throw EXCEPTION(SystemException());
 			}
 		}
 	}
 }
 
 
-
-
-
-void IOCPBase::RemoveTransport(Transport* transport)
+void IOCPBase::AssociateWithIOCP(Socketable* socketable)
 {
-	EnterCriticalSection(&m_Socket2ClientsCS);	
+//	assert(!socketable->m_IsUDPTransport || m_UDPDomain == socketable);		
 
-	auto it = find_if(m_Socket2Clients.begin(), m_Socket2Clients.end(), [transport](const pair<SOCKET, Transport* >& e)->bool
+	HANDLE hTemp = CreateIoCompletionPort((HANDLE)socketable->m_Socket, m_hIOCompletionPort, (ULONG_PTR)socketable, 0);
+
+	if (NULL == hTemp)
 	{
-		return e.second == transport;
+		WriteToConsole("AssociateWithIOCP GetLastError == %i", GetLastError());
+		throw EXCEPTION(SystemException());
+	}
+}
+
+
+void IOCPBase::AddTransport(Transport* transport)
+{
+	EnterCriticalSection(&m_Socket2TransportsCS);
+
+	m_Socket2Transports.insert(make_pair(transport->m_Socket, transport));
+
+	LeaveCriticalSection(&m_Socket2TransportsCS);
+}
+
+
+void IOCPBase::RemoveTransport(Transport* client)
+{	
+	EnterCriticalSection(&m_Socket2TransportsCS);
+
+	auto it = find_if(m_Socket2Transports.begin(), m_Socket2Transports.end(), [client](const pair<SOCKET, Transport* >& e)->bool
+	{
+		return e.second == client;
 	});
 
-	if (it != m_Socket2Clients.end())
+	if (it != m_Socket2Transports.end())
 		//auto it = m_Socket2Clients.find(transport->m_ClientSocket);
-		//ASSERT(it != m_Socket2Clients.end());
+		//assert(it != m_Socket2Clients.end());
 	{
+		if (it->second->m_IsUDPTransport)
+		{
+			UDPTransport* udpTransport = static_cast<UDPTransport*>(it->second);
+			m_UDPDomain->Remove(udpTransport);
+		}
+
 		delete it->second;
-		m_Socket2Clients.erase(it);
+		m_Socket2Transports.erase(it);
 	}
 
-	LeaveCriticalSection(&m_Socket2ClientsCS);
+	LeaveCriticalSection(&m_Socket2TransportsCS);	
 }
 
 void IOCPBase::CreateIOCP()
@@ -120,7 +160,7 @@ void IOCPBase::CreateIOCP()
 	if (NULL == m_hIOCompletionPort)
 	{
 		m_hIOCompletionPort = INVALID_HANDLE_VALUE;
-		throw SYS_EXCEPTION;
+		throw EXCEPTION(SystemException());
 	}
 }
 
@@ -135,29 +175,11 @@ void IOCPBase::CreateRecvThreadPool()
 		{
 			//остановить потоки
 			m_RecvThreads.clear();
-			throw SYS_EXCEPTION;
+			throw EXCEPTION(SystemException());
 		}
 
 		m_RecvThreads.push_back(thread);
 	}
-}
-
-void IOCPBase::AssociateWithIOCP(Transport* transport)
-{
-	HANDLE hTemp = CreateIoCompletionPort((HANDLE)transport->m_ClientSocket, m_hIOCompletionPort, (DWORD)transport, 0);
-	
-
-	if (NULL == hTemp)
-	{
-		WriteToConsole("AssociateWithIOCP GetLastError == %i", GetLastError());
-		throw SYS_EXCEPTION;
-	}
-
-	EnterCriticalSection( &m_Socket2ClientsCS ); 
-
-	m_Socket2Clients.insert(make_pair(transport->m_ClientSocket, transport));
-
-	LeaveCriticalSection( &m_Socket2ClientsCS );
 }
 
 void IOCPBase::DestroyRecvThreadPool()
@@ -177,7 +199,7 @@ void IOCPBase::DestroyIOCP()
 	{
 		BOOL result = CloseHandle(m_hIOCompletionPort);
 		
-		ASSERT(result);		
+		assert(result);		
 		m_hIOCompletionPort = INVALID_HANDLE_VALUE;
 	}
 }
@@ -185,39 +207,92 @@ void IOCPBase::DestroyIOCP()
 void IOCPBase::PrintTotalRecived()
 {
 	int id = 0;
-	decltype(m_Socket2Clients) socket2Clients;
+	decltype(m_Socket2Transports) socket2Transports;
 
-	EnterCriticalSection(&m_Socket2ClientsCS);
+	EnterCriticalSection(&m_Socket2TransportsCS);
 
-	socket2Clients = m_Socket2Clients;
+	socket2Transports = m_Socket2Transports;
 
-	LeaveCriticalSection(&m_Socket2ClientsCS);
+	//m_Socket2Transports.swap(socket2Transports);
+	
+	LeaveCriticalSection(&m_Socket2TransportsCS);
 
+	string text;
+	text.reserve(100);
 
-	for (auto& s2t : socket2Clients)
+	for (auto& s2t : socket2Transports)
 	{		
 		Transport* transport = s2t.second;
 		
-		WriteToConsole("%s transport %i speed %u KB NumErrors %u", m_Prefix.c_str(), id++, (transport->m_TotalRecived  / (TimerThread::DelayMilliseconds / 1000) ) / (1024 ), transport->m_ErrorCounter );
+		static const int deltaSeconds = TimerThread::DelayMilliseconds / 1000;
+		
+		static const string dims[] = { "B", "KB", "MB", "GB" };
+		DWORD speed = transport->m_TotalRecived / deltaSeconds;
+		
+		int c_dim = 0;
+
+		for (int size_dim = 2; speed >= 1024 && c_dim < size_dim; c_dim++)
+		{
+			speed /= 1024;
+		}
+
+		string dim = dims[c_dim] + "/sec";
+
+		string transportType;
+		if (transport->m_IsUDPTransport)
+		{
+			transportType = "UDP";
+		}
+		else
+		{
+			if (dynamic_cast<SSLTransport*>(transport))
+				transportType = "SSL"; 
+			else
+				transportType = "TCP";
+		}
+			
+						
+		text = m_Prefix + " " + transportType + " transport " + to_string(id++) + " " + to_string(speed) + " " + dim + " NumErrors " + to_string(transport->m_ErrorCounter);
+
+		WriteToConsole( &text[0] );
 		transport->m_TotalRecived = 0;
 		transport->m_ErrorCounter = 0;
-	}
+	}	
+
+	WriteToConsole(" ");
 }
 
-Transport* IOCPBase::NewTransport(SOCKET socket)
+void IOCPBase::StartUDP()
 {
-	return new Transport(this, socket);
+	m_UDPDomain = new UDPDomain(this);
+	m_UDPDomain->Bind(SERVER_PORT);
+	m_UDPDomain->StartReceiving();
 }
 
-UDPTransport* IOCPBase::NewUDPTransport(SOCKET socket)
+TCPTransport* IOCPBase::NewTCPTransport(SOCKET socket /*= INVALID_SOCKET*/)
 {
-	return new UDPTransport(this, socket);	
+	return new TCPTransport(this, socket);
 }
 
-IOCPBase::IOCPBase() : m_hIOCompletionPort(INVALID_HANDLE_VALUE), m_TimerThread(this)
+UDPTransport* IOCPBase::NewUDPTransport(UDPDomain* udpDomain)
 {
-	ZeroMemory(&m_Socket2ClientsCS, sizeof(m_Socket2ClientsCS));
-	InitializeCriticalSection(&m_Socket2ClientsCS);
+	return new UDPTransport(this, udpDomain);
+}
+
+
+SSLTransport* IOCPBase::NewSSLTransport(SOCKET socket /*= INVALID_SOCKET*/)
+{
+	return new SSLTransport(this, socket);
+}
+
+IOCPBase::IOCPBase() : m_hIOCompletionPort(INVALID_HANDLE_VALUE),
+						m_TCPServer(nullptr),
+						m_SSLServer(nullptr),
+						m_UDPDomain(nullptr),
+						m_TimerThread(this)
+{
+	ZeroMemory(&m_Socket2TransportsCS, sizeof(m_Socket2TransportsCS));
+	InitializeCriticalSection(&m_Socket2TransportsCS);
 
 	CreateIOCP();
 	CreateRecvThreadPool();
@@ -227,110 +302,18 @@ IOCPBase::IOCPBase() : m_hIOCompletionPort(INVALID_HANDLE_VALUE), m_TimerThread(
 IOCPBase::~IOCPBase()
 {
 	m_TimerThread.Quit();
-	DestroyRecvThreadPool();
-	
+	DestroyRecvThreadPool();	
 
-	for (auto& transport : m_Socket2Clients)
+	for (auto& transport : m_Socket2Transports)
 	{
 		delete transport.second;
 	}
-	m_Socket2Clients.clear();
-
+	m_Socket2Transports.clear();
 	
 	DestroyIOCP();
 
 
-	DeleteCriticalSection(&m_Socket2ClientsCS);
-}
-
-
-Transport::Transport(IOCPBase* iocpBase, SOCKET clientSocket) : m_IOCPBaseParent(iocpBase),
-																m_ClientSocket(clientSocket),																
-																m_TotalRecived(0),
-																m_CurrRecived(0),
-																m_CurrProcessed(0),
-																m_ErrorCounter(0)
-{
-	u_long value = 1;
-	
-	ioctlsocket(m_ClientSocket, FIONBIO, &value);
-
-	//ZeroMemory(&m_SendOverlapped, sizeof(m_SendOverlapped));
-	//m_SendOverlapped.hEvent = WSACreateEvent();
-	//if (m_SendOverlapped.hEvent == WSA_INVALID_EVENT)
-	//	throw SYS_EXCEPTION;
-
-
-
-	m_RecvBuffer.resize(sizeof(g_NETDATA) * 5);
-
-	ZeroMemory(&m_ReciveOverlapped, sizeof(m_ReciveOverlapped));
-	m_ReciveOverlapped.hEvent = WSACreateEvent();
-	if (m_ReciveOverlapped.hEvent == WSA_INVALID_EVENT)
-		throw SYS_EXCEPTION;
-}
-
-
-Transport::~Transport()
-{
-	//if (m_SendOverlapped.hEvent != 0)
-	//{
-	//	WSACloseEvent(m_SendOverlapped.hEvent);
-	//}
-
-	if (m_ReciveOverlapped.hEvent != 0)
-	{
-		WSACloseEvent(m_ReciveOverlapped.hEvent);
-	}
-	
-	if (m_ClientSocket != INVALID_SOCKET)
-	{
-		closesocket(m_ClientSocket);
-		m_ClientSocket = INVALID_SOCKET;
-	}
-}
-
-
-bool Transport::Send(char* data, ULONG size)
-{
-	//DWORD dwBytes;
-
-	//WSABUF buffer;
-	//buffer.buf = (CHAR*)data;
-	//buffer.len = size;
-
-
-	//auto nBytesSent = WSASend(m_ClientSocket, &buffer, 1, &dwBytes, 0, &m_SendOverlapped, NULL);
-
-	//if ((SOCKET_ERROR != nBytesSent) || (WSA_IO_PENDING == WSAGetLastError()))
-	//	return true;
-	//else
-	//	return false;
-
-	int result = send(m_ClientSocket, data, size, 0);
-
-	if (result != SOCKET_ERROR)
-		return true;
-	else
-	{		
-		return (WSAGetLastError() == WSAEWOULDBLOCK);
-	}
-}
-
-bool Transport::Recive()
-{
-	DWORD dwBytes = 0;
-	DWORD flag = 0;
-
-	WSABUF buffer;
-	buffer.buf = (CHAR*)m_RecvBuffer.data() + m_CurrRecived;
-	buffer.len = m_RecvBuffer.size() - m_CurrRecived;
-
-	ASSERT(buffer.len > 0);
-
-	auto result = WSARecv(m_ClientSocket, &buffer, 1, NULL, &flag, &m_ReciveOverlapped, NULL);
-
-	return ((SOCKET_ERROR != result) || (WSA_IO_PENDING == WSAGetLastError()));
+	DeleteCriticalSection(&m_Socket2TransportsCS);	
 }
 
 
@@ -370,35 +353,44 @@ void IOCPBase::TimerThread::SendQuit()
 	m_Quit = true;
 }
 
-bool UDPTransport::Send(char* data, ULONG size)
-{
-	int result = sendto(m_ClientSocket, data, size, 0, &m_Address, sizeof(m_Address));
 
-	if (result != SOCKET_ERROR)
-		return true;
+
+
+
+
+
+
+HLTransportData* HL_IOCP::GetHLTransportData(Transport* transport)
+{
+	
+	if ( dynamic_cast< HLTransport<UDPTransport>* >(transport) )
+		return static_cast<HLTransportData*>( static_cast< HLTransport<UDPTransport>* >(transport) );
 	else
 	{
-		return (WSAGetLastError() == WSAEWOULDBLOCK);
+		if (dynamic_cast< HLTransport<SSLTransport>* >(transport))
+		{
+			return static_cast<HLTransportData*>(static_cast<HLTransport<SSLTransport>*>(transport));
+		}
+		else
+		{
+			assert(dynamic_cast< HLTransport<TCPTransport>* >(transport) );
+			return static_cast<HLTransportData*>(static_cast<HLTransport<TCPTransport>*>(transport));
+		}		
 	}
 }
 
-bool UDPTransport::Recive()
+TCPTransport* HL_IOCP::NewTCPTransport(SOCKET socket /*= INVALID_SOCKET*/)
 {
-	DWORD dwBytes = 0;
-	DWORD flag = 0;
-
-	WSABUF buffer;
-	buffer.buf = (CHAR*)m_RecvBuffer.data() + m_CurrRecived;
-	buffer.len = m_RecvBuffer.size() - m_CurrRecived;
-
-	ASSERT(buffer.len > 0);
-
-	auto result = WSARecvFrom(m_ClientSocket, &buffer, 1, NULL, &flag, &m_Address, &m_AddressLen , &m_ReciveOverlapped);
-
-	return ((SOCKET_ERROR != result) || (WSA_IO_PENDING == WSAGetLastError()));
+	return new HLTransport<TCPTransport>(this, socket);
 }
 
-UDPTransport::UDPTransport(IOCPBase* iocpBase, SOCKET clientSocket) : Transport(iocpBase, clientSocket)
+UDPTransport* HL_IOCP::NewUDPTransport(UDPDomain* udpDomain)
 {
-
+	return new HLTransport<UDPTransport>(this, udpDomain);
 }
+
+SSLTransport* HL_IOCP::NewSSLTransport(SOCKET socket /*= INVALID_SOCKET*/)
+{
+	return new HLTransport<SSLTransport>(this, socket);
+}
+

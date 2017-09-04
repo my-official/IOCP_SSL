@@ -6,7 +6,7 @@ unsigned __stdcall ClientMain(void*);
 
 
 
-class Client : public IOCPBase
+class Client : public HL_IOCP
 {
 public:
 	volatile bool m_Quit;
@@ -15,13 +15,18 @@ public:
 
 	HANDLE m_hSignal;
 	CRITICAL_SECTION m_ParseQueueCS;
-	queue<Transport*, deque<Transport*> > m_ParseQueue;
+	queue<TCPTransport*, deque<TCPTransport*> > m_ParseQueue;
 	
+	
+	SOCKET NewUDPSocket();
+	
+	std::string m_ServerAddress;
+	std::string	m_ServerPort;
 
-	SOCKET NewTCPConnection();
-	SOCKET NewUDPConnection();
-
-	virtual bool OnRecived(Transport* transport, DWORD dwBytesTransfered) override;
+	void SetupAdditionalConnections();
+	virtual bool OnUDPNewRemoteAddress(DWORD dwBytesTransfered, UDPTransport* udpTransport) override;
+	virtual bool OnTransportConnected(TCPTransport* transport) override;
+	virtual bool OnRecived(Transport* transport) override;
 
 	Client();
 	~Client();
@@ -30,7 +35,7 @@ private:
 	void FastValidate(Transport* transport);
 
 
-	void AddTransportForProcess(Transport* transport);
+	void AddTransportForProcess(TCPTransport* transport);
 	void ProcessTransport(Transport* transport);
 };
 
