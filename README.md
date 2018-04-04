@@ -12,4 +12,5 @@ Installing dependencies:
 Download and extract prebuilded libraries to dep directory:
 
 https://www.npcglib.org/~stathis/blog/precompiled-openssl/
+
 https://ftp.openbsd.org/pub/OpenBSD/LibreSSL/
