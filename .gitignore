@@ -4,7 +4,7 @@
 # User-specific files
 *.suo
 #IOCP.vcxproj.user required for debugger
-*.user 
+#*.user 
 *.userosscache
 *.sln.docstates
 
@@ -247,4 +247,3 @@ ModelManifest.xml
 /dep/libressl-2.5.5-windows
 /dep/openssl-1.0.1u-vs2015
 /dep/openssl-1.1.0f-vs2015
-/IOCP.vcxproj.user
