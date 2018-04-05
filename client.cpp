@@ -70,15 +70,15 @@ void Client::SetupAdditionalConnections()
 	//	transport->Send((char*)&g_NumUInt32ForRecv, sizeof(g_NumUInt32ForRecv));
 	//}
 
-	for (int c = 0, size = 1; c < size; c++)
-	{
-		UDPDomain* domain = new UDPDomain(this);
-		/*AddTransport(domain);
+	//for (int c = 0, size = 1; c < size; c++)
+	//{
+	//	UDPDomain* domain = new UDPDomain(this);
+	//	/*AddTransport(domain);
 
-		assert(numUInt32ForRecv <= g_NETDATA_SIZE);*/
+	//	assert(numUInt32ForRecv <= g_NETDATA_SIZE);*/
 
-	//	domain->Send((char*)&g_NumUInt32ForRecv, sizeof(g_NumUInt32ForRecv));
-	}
+	////	domain->Send((char*)&g_NumUInt32ForRecv, sizeof(g_NumUInt32ForRecv));
+	//}
 }
 
 bool Client::OnUDPNewRemoteAddress(DWORD dwBytesTransfered, UDPTransport* udpTransport)
